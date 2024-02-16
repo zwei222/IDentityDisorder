@@ -1,0 +1,82 @@
+name: release
+
+on:
+  push:
+    branches:
+    - "release/*"
+
+env:
+  BASE_NAME: IDentityDisorder
+  EXE_NAME: idgen
+  PROJECT_PATH: src/IDentityDisorder/IDentityDisorder.csproj
+  CONFIGURATION: Release
+  DOTNET_VERSION: 8
+
+jobs:
+  initialize:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.environments.outputs.version }}
+    steps:
+    - name: Set version
+      id: environments
+      run: |
+        branch_name=${{ github.ref_name }}
+        split=(${branch_name//// })
+        version=${split[1]}
+        echo "Version: $version"
+        echo "version=${version}" >> $GITHUB_OUTPUT
+
+  release:
+    strategy:
+      matrix:
+        platform: [windows-latest, macos-latest, ubuntu-latest]
+        include:
+          - platform: windows-latest
+            runtime: win-x64
+            extension: ".exe"
+          - platform: macos-latest
+            runtime: osx-x64
+            extension: ""
+          - platform: ubuntu-latest
+            runtime: linux-x64
+            extension: ""
+
+    runs-on: ${{ matrix.platform }}
+    needs: initialize
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v3
+
+    - name: Setup .NET
+      uses: actions/setup-dotnet@v3
+      with:
+        dotnet-version: ${{ env.DOTNET_VERSION }}
+
+    - name: Install dependencies
+      run: dotnet restore
+
+    - name: Build
+      run: dotnet build --configuration ${{ env.CONFIGURATION }} --no-restore /p:Version=${{ needs.initialize.outputs.version }}
+
+    - name: Publish
+      run: |
+        dotnet publish ${{ env.PROJECT_PATH }} --configuration ${{ env.CONFIGURATION }} --runtime ${{ matrix.runtime }} --output ./artifacts/ /p:Version=${{ needs.initialize.outputs.version }}
+
+    - name: Archive for Windows
+      if: matrix.platform == 'windows-latest'
+      run: |
+        powershell Compress-Archive -Path ./artifacts/${{ env.EXE_NAME }}${{ matrix.extension }} -DestinationPath ${{ env.BASE_NAME }}-${{ matrix.runtime }}.zip
+
+    - name: Archive for macOS or Linux
+      if: matrix.platform != 'windows-latest'
+      run: |
+        zip -j ${{ env.BASE_NAME }}-${{ matrix.runtime }}.zip ./artifacts/${{ env.EXE_NAME }}${{ matrix.extension }}
+
+    - name: Release
+      uses: softprops/action-gh-release@v1
+      with:
+        name: Ver.${{ needs.initialize.outputs.version }}
+        tag_name: v${{ needs.initialize.outputs.version }}
+        files: |
+          ${{ env.BASE_NAME }}-${{ matrix.runtime }}.zip
